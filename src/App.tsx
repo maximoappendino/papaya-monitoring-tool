@@ -21,8 +21,7 @@ function App() {
 
   const fetchSessions = useCallback(async () => {
     try {
-      const host = window.location.hostname;
-      const response = await fetch(`http://${host}:3001/sessions`);
+      const response = await fetch('/sessions');
       if (!response.ok) throw new Error('Failed to fetch');
       const data = await response.json();
       setSessions(data);
@@ -34,8 +33,7 @@ function App() {
 
   const updateSyncConfig = useCallback(async (timeframes: string[]) => {
     try {
-      const host = window.location.hostname;
-      await fetch(`http://${host}:3001/sync-config`, {
+      await fetch('/sync-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ timeframes })
