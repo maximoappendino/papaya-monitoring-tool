@@ -127,14 +127,38 @@ def find_in_db(display_name):
                     
     return None
 
+import zoneinfo
+
 def get_hour_label(iso_str):
     try:
         dt = parser.parse(iso_str)
-        return f"{dt.hour:02d}:00"
-    except:
+        # Convert to Central Time (America/Chicago)
+        central = zoneinfo.ZoneInfo("America/Chicago")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        dt_central = dt.astimezone(central)
+        # Handle labels like 16:30 -> 16:00
+        return f"{dt_central.hour:02d}:00"
+    except Exception as e:
         return "00:00"
 
-def skeleton_loader():
+def background_startup():
+    global creds
+    print("🚀 [STARTUP] Beginning background initialization...")
+    load_databases()
+    try:
+        creds = auth.authenticate()
+        print("✅ [STARTUP] Authentication successful.")
+    except Exception as e:
+        print(f"❌ [STARTUP] Authentication failed: {e}")
+
+# Start background tasks
+threading.Thread(target=background_startup, daemon=True).start()
+threading.Thread(target=skeleton_loader, daemon=True).start()
+threading.Thread(target=attendance_monitor, daemon=True).start()
+
+if __name__ == '__main__':
+    app.run(port=3001, host='0.0.0.0')
     global calendar_skeleton, enriched_sessions, creds
     while True:
         try:
@@ -314,16 +338,6 @@ def update_sync_config():
 @app.route('/sessions/<session_id>/record', methods=['POST'])
 def toggle_recording(session_id):
     return jsonify({"success": True})
-
-load_databases()
-try:
-    creds = auth.authenticate()
-except Exception as e:
-    print(f"CRITICAL: Authentication failed: {e}")
-    creds = None
-
-threading.Thread(target=skeleton_loader, daemon=True).start()
-threading.Thread(target=attendance_monitor, daemon=True).start()
 
 if __name__ == '__main__':
     app.run(port=3001, host='0.0.0.0')
