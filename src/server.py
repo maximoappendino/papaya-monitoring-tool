@@ -135,20 +135,22 @@ def get_hour_label(iso_str):
         return "00:00"
 
 def skeleton_loader():
-    global calendar_skeleton, creds
+    global calendar_skeleton, enriched_sessions, creds
     while True:
         try:
             if not creds:
                 time.sleep(1)
                 continue
             
+            # Fetch range: -12 hours to +24 hours to cover all timezones for "today"
             now_dt = datetime.datetime.now(datetime.timezone.utc)
-            start_of_day = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_of_day = start_of_day + datetime.timedelta(days=1)
+            start_range = now_dt - datetime.timedelta(hours=12)
+            end_range = now_dt + datetime.timedelta(hours=24)
             
-            t_min = start_of_day.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-            t_max = end_of_day.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            t_min = start_range.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            t_max = end_range.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
+            print(f"🔄 [SKELETON] Syncing range: {t_min} to {t_max}")
             events = calendar_client.get_upcoming_events(creds, max_results=5000, time_min=t_min, time_max=t_max)
             
             new_skeleton = []
@@ -161,12 +163,16 @@ def skeleton_loader():
                         "response": a.get('responseStatus', 'needsAction')
                     })
 
+                # Handle multi-day or all-day events safely
+                start_val = event['start'].get('dateTime', event['start'].get('date'))
+                end_val = event['end'].get('dateTime', event['end'].get('date'))
+
                 new_skeleton.append({
                     "id": event.get('id'),
                     "summary": event.get('summary', 'No Title'),
                     "meetingLink": calendar_client.extract_meet_link(event) or "",
-                    "startTime": event['start'].get('dateTime', event['start'].get('date')),
-                    "endTime": event['end'].get('dateTime', event['end'].get('date')),
+                    "startTime": start_val,
+                    "endTime": end_val,
                     "attendees": attendees,
                     "participants": [],
                     "isRecording": False,
@@ -177,14 +183,26 @@ def skeleton_loader():
             
             with lock:
                 calendar_skeleton = new_skeleton
-                if not enriched_sessions:
+                # Initialize enriched_sessions if it's the first run
+                if not enriched_sessions and calendar_skeleton:
                     enriched_sessions = [s.copy() for s in calendar_skeleton]
             
-            print(f"✅ [SKELETON] {len(calendar_skeleton)} events synced.")
+            print(f"✅ [SKELETON] {len(calendar_skeleton)} events synced successfully.")
         except Exception as e:
             print(f"❌ [SKELETON] Error: {e}")
         
         time.sleep(300)
+
+@app.route('/debug')
+def debug_info():
+    with lock:
+        return jsonify({
+            "skeleton_count": len(calendar_skeleton),
+            "enriched_count": len(enriched_sessions),
+            "active_timeframes": active_timeframes,
+            "has_creds": creds is not None,
+            "server_time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        })
 
 def attendance_monitor():
     global enriched_sessions, calendar_skeleton, active_timeframes, creds
