@@ -297,9 +297,15 @@ def update_sync_config():
 def toggle_recording(session_id):
     return jsonify({"success": True})
 
-if __name__ == '__main__':
-    load_databases() # Load CSVs at startup
+load_databases()
+try:
     creds = auth.authenticate()
-    threading.Thread(target=skeleton_loader, daemon=True).start()
-    threading.Thread(target=attendance_monitor, daemon=True).start()
+except Exception as e:
+    print(f"CRITICAL: Authentication failed: {e}")
+    creds = None
+
+threading.Thread(target=skeleton_loader, daemon=True).start()
+threading.Thread(target=attendance_monitor, daemon=True).start()
+
+if __name__ == '__main__':
     app.run(port=3001, host='0.0.0.0')
