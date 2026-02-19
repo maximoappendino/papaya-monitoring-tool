@@ -1,0 +1,24 @@
+# Environments
+venv/
+node_modules/
+dist/
+__pycache__/
+
+# Credentials and Tokens
+credentials.json
+token.pickle
+
+# Logs
+*.log
+api_logs.txt
+logs.txt
+
+# Student and Tutor Data (optional, but safer to exclude if sensitive)
+# students.csv
+# students.ods
+# tutors.csv
+# tutors.ods
+
+# System files
+.DS_Store
+.env
