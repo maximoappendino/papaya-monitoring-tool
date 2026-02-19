@@ -16,17 +16,11 @@ import time
 import csv
 import os
 import re
+import unicodedata
+import zoneinfo
 
 app = Flask(__name__, static_folder='../dist', static_url_path='/')
 CORS(app)
-
-@app.route('/')
-def serve_index():
-    return app.send_static_file('index.html')
-
-@app.errorhandler(404)
-def not_found(e):
-    return app.send_static_file('index.html')
 
 # Global storage
 calendar_skeleton = []
@@ -34,34 +28,23 @@ enriched_sessions = []
 active_timeframes = [] 
 creds = None
 lock = threading.Lock()
-
-# Database matching data
-name_db = [] # List of { 'norm_name': str, 'email': str, 'type': 'tutor'|'student' }
-
-import unicodedata
+name_db = []
 
 def normalize_name(name):
     if not name: return ""
-    # Remove accents/diacritics
     name = "".join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
-    # Lowercase
     name = name.lower()
-    # Remove special chars and extra spaces (except comma)
     name = re.sub(r'[^a-z0-9\s,]', '', name)
-    # Handle "Last, First" -> "First Last"
     if ',' in name:
         parts = name.split(',')
         if len(parts) >= 2:
             name = parts[1].strip() + " " + parts[0].strip()
-    # Final cleanup of extra spaces
     return " ".join(name.split())
 
 def load_databases():
     global name_db
     db = []
     seen_emails = set()
-    
-    # Load Students
     if os.path.exists('students.csv'):
         try:
             with open('students.csv', mode='r', encoding='utf-8') as f:
@@ -70,17 +53,12 @@ def load_databases():
                     name = row.get('student_name') or ""
                     email = (row.get('email') or "").lower().strip()
                     if name and email and email not in seen_emails:
-                        db.append({
-                            'norm_name': normalize_name(name),
-                            'email': email,
-                            'type': 'student'
-                        })
+                        db.append({'norm_name': normalize_name(name), 'email': email, 'type': 'student'})
                         seen_emails.add(email)
             print(f"📚 Loaded students database.")
         except Exception as e:
             print(f"❌ Error loading students.csv: {e}")
 
-    # Load Tutors
     if os.path.exists('tutors.csv'):
         try:
             with open('tutors.csv', mode='r', encoding='utf-8') as f:
@@ -89,94 +67,52 @@ def load_databases():
                     name = row.get('no_id_name') or ""
                     email = (row.get('email') or "").lower().strip()
                     if name and email and email != 'n/a' and not email.startswith('#') and email not in seen_emails:
-                        db.append({
-                            'norm_name': normalize_name(name),
-                            'email': email,
-                            'type': 'tutor'
-                        })
+                        db.append({'norm_name': normalize_name(name), 'email': email, 'type': 'tutor'})
                         seen_emails.add(email)
             print(f"📚 Loaded tutors database.")
         except Exception as e:
             print(f"❌ Error loading tutors.csv: {e}")
-            
     name_db = db
 
 def find_in_db(display_name):
     norm_display = normalize_name(display_name)
     if not norm_display: return None
-    
-    # 1. Try exact match on normalized name
     for entry in name_db:
-        if entry['norm_name'] == norm_display:
-            return entry
-            
-    # 2. Aggressive Containment
+        if entry['norm_name'] == norm_display: return entry
     for entry in name_db:
         if entry['norm_name'] in norm_display or norm_display in entry['norm_name']:
-            # Extra check: ensure it's not just a tiny substring
-            if len(norm_display) > 3 and len(entry['norm_name']) > 3:
-                return entry
-            
-    # 3. Word-based overlap (at least 2 words must match)
+            if len(norm_display) > 3 and len(entry['norm_name']) > 3: return entry
     display_words = set(norm_display.split())
     for entry in name_db:
         db_words = set(entry['norm_name'].split())
         overlap = display_words.intersection(db_words)
-        if len(overlap) >= 2:
-            return entry
-                    
+        if len(overlap) >= 2: return entry
     return None
-
-import zoneinfo
 
 def get_hour_label(iso_str):
     try:
         dt = parser.parse(iso_str)
-        # Convert to Central Time (America/Chicago)
         central = zoneinfo.ZoneInfo("America/Chicago")
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=datetime.timezone.utc)
         dt_central = dt.astimezone(central)
-        # Handle labels like 16:30 -> 16:00
         return f"{dt_central.hour:02d}:00"
-    except Exception as e:
+    except:
         return "00:00"
 
-def background_startup():
-    global creds
-    print("🚀 [STARTUP] Beginning background initialization...")
-    load_databases()
-    try:
-        creds = auth.authenticate()
-        print("✅ [STARTUP] Authentication successful.")
-    except Exception as e:
-        print(f"❌ [STARTUP] Authentication failed: {e}")
-
-# Start background tasks
-threading.Thread(target=background_startup, daemon=True).start()
-threading.Thread(target=skeleton_loader, daemon=True).start()
-threading.Thread(target=attendance_monitor, daemon=True).start()
-
-if __name__ == '__main__':
-    app.run(port=3001, host='0.0.0.0')
+def skeleton_loader():
     global calendar_skeleton, enriched_sessions, creds
     while True:
         try:
             if not creds:
                 time.sleep(1)
                 continue
-            
-            # Fetch range: -12 hours to +24 hours to cover all timezones for "today"
             now_dt = datetime.datetime.now(datetime.timezone.utc)
             start_range = now_dt - datetime.timedelta(hours=12)
             end_range = now_dt + datetime.timedelta(hours=24)
-            
             t_min = start_range.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
             t_max = end_range.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-
             print(f"🔄 [SKELETON] Syncing range: {t_min} to {t_max}")
             events = calendar_client.get_upcoming_events(creds, max_results=5000, time_min=t_min, time_max=t_max)
-            
             new_skeleton = []
             for event in events:
                 attendees = []
@@ -186,11 +122,8 @@ if __name__ == '__main__':
                         "name": a.get('displayName', 'No Name'),
                         "response": a.get('responseStatus', 'needsAction')
                     })
-
-                # Handle multi-day or all-day events safely
                 start_val = event['start'].get('dateTime', event['start'].get('date'))
                 end_val = event['end'].get('dateTime', event['end'].get('date'))
-
                 new_skeleton.append({
                     "id": event.get('id'),
                     "summary": event.get('summary', 'No Title'),
@@ -202,20 +135,79 @@ if __name__ == '__main__':
                     "isRecording": False,
                     "status": "IDLE"
                 })
-            
             new_skeleton.sort(key=lambda x: parser.parse(x["startTime"]).timestamp())
-            
             with lock:
                 calendar_skeleton = new_skeleton
-                # Initialize enriched_sessions if it's the first run
                 if not enriched_sessions and calendar_skeleton:
                     enriched_sessions = [s.copy() for s in calendar_skeleton]
-            
-            print(f"✅ [SKELETON] {len(calendar_skeleton)} events synced successfully.")
+            print(f"✅ [SKELETON] {len(calendar_skeleton)} events synced.")
         except Exception as e:
             print(f"❌ [SKELETON] Error: {e}")
-        
         time.sleep(300)
+
+def attendance_monitor():
+    global enriched_sessions, calendar_skeleton, active_timeframes, creds
+    while True:
+        try:
+            if not creds or not calendar_skeleton:
+                time.sleep(2)
+                continue
+            with lock: current_active = list(active_timeframes)
+            if not current_active:
+                time.sleep(5)
+                continue
+            relevant_sessions = []
+            other_sessions = []
+            for s in calendar_skeleton:
+                if get_hour_label(s["startTime"]) in current_active:
+                    relevant_sessions.append(s.copy())
+                else:
+                    other_sessions.append(s)
+            
+            def process_session(session):
+                if not session["meetingLink"]: return session
+                try:
+                    conf_code = session["meetingLink"].split('/')[-1].split('?')[0]
+                    filter_q = f'space.meeting_code="{conf_code}"'
+                    records = meet_client.list_conference_records(creds, filter_query=filter_q)
+                    records.sort(key=lambda r: r.get('startTime', ''), reverse=True)
+                    active_record = next((r for r in records if not r.get('endTime')), records[0] if records else None)
+                    if active_record:
+                        conf_id = active_record.get('name')
+                        p_data = meet_client.get_participants(creds, conf_id)
+                        active_p = []
+                        for p in p_data:
+                            if not p.get('latestEndTime'):
+                                display_name = "Guest"
+                                if p.get('signedinUser'): display_name = p['signedinUser'].get('displayName', 'User')
+                                elif p.get('anonymousUser'): display_name = p['anonymousUser'].get('displayName', 'Guest')
+                                match = find_in_db(display_name)
+                                email = match['email'] if match else None
+                                active_p.append({"name": display_name, "email": email, "isActive": True})
+                        session["participants"] = active_p
+                        session["status"] = "ACTIVE" if active_p else "IDLE"
+                        recs = meet_client.get_recordings(creds, conf_id)
+                        session["isRecording"] = any(not r.get('endTime') for r in recs) if recs else False
+                    else:
+                        session["status"] = "IDLE"
+                        session["participants"] = []
+                except Exception as e:
+                    print(f"Error enriching {session.get('summary')}: {e}")
+                return session
+
+            with ThreadPoolExecutor(max_workers=30) as executor:
+                processed_relevant = list(executor.map(process_session, relevant_sessions))
+            final_list = sorted(processed_relevant + other_sessions, key=lambda x: parser.parse(x["startTime"]).timestamp())
+            with lock: enriched_sessions = final_list
+        except Exception as e:
+            print(f"❌ [ATTENDANCE] Error: {e}")
+        time.sleep(20)
+
+@app.route('/')
+def serve_index(): return app.send_static_file('index.html')
+
+@app.errorhandler(404)
+def not_found(e): return app.send_static_file('index.html')
 
 @app.route('/debug')
 def debug_info():
@@ -228,116 +220,29 @@ def debug_info():
             "server_time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()
         })
 
-def attendance_monitor():
-    global enriched_sessions, calendar_skeleton, active_timeframes, creds
-    while True:
-        try:
-            if not creds or not calendar_skeleton:
-                time.sleep(2)
-                continue
-            
-            with lock:
-                current_active = list(active_timeframes)
-            
-            if not current_active:
-                time.sleep(5)
-                continue
-
-            relevant_sessions = []
-            other_sessions = []
-            for s in calendar_skeleton:
-                if get_hour_label(s["startTime"]) in current_active:
-                    relevant_sessions.append(s.copy())
-                else:
-                    other_sessions.append(s)
-
-            print(f"📡 [ATTENDANCE] Checking {len(relevant_sessions)} sessions in active windows...")
-            
-            def process_session(session):
-                if not session["meetingLink"]: return session
-
-                try:
-                    conf_code = session["meetingLink"].split('/')[-1].split('?')[0]
-                    filter_q = f'space.meeting_code="{conf_code}"'
-                    records = meet_client.list_conference_records(creds, filter_query=filter_q)
-                    records.sort(key=lambda r: r.get('startTime', ''), reverse=True)
-                    
-                    active_record = None
-                    for r in records:
-                        if not r.get('endTime'):
-                            active_record = r
-                            break
-                    if not active_record and records:
-                        active_record = records[0]
-
-                    if active_record:
-                        conf_id = active_record.get('name')
-                        p_data = meet_client.get_participants(creds, conf_id)
-                        
-                        active_p = []
-                        for p in p_data:
-                            if not p.get('latestEndTime'):
-                                display_name = "Guest"
-                                if p.get('signedinUser'): display_name = p['signedinUser'].get('displayName', 'User')
-                                elif p.get('anonymousUser'): display_name = p['anonymousUser'].get('displayName', 'Guest')
-                                
-                                # ATTEMPT DATABASE MATCH
-                                match = find_in_db(display_name)
-                                email = None
-                                if match:
-                                    email = match['email']
-                                    print(f"🎯 Matched '{display_name}' to {email} ({match['type']})")
-                                else:
-                                    print(f"❓ No match found for '{display_name}' in database.")
-                                
-                                active_p.append({ 
-                                    "name": display_name, 
-                                    "email": email, # PASS EMAIL TO FRONTEND FOR PERFECT MATCHING
-                                    "isActive": True 
-                                })
-                        
-                        session["participants"] = active_p
-                        session["status"] = "ACTIVE" if len(active_p) > 0 else "IDLE"
-                        recs = meet_client.get_recordings(creds, conf_id)
-                        session["isRecording"] = any(not r.get('endTime') for r in recs) if recs else False
-                    else:
-                        session["status"] = "IDLE"
-                        session["participants"] = []
-                        
-                except Exception as e:
-                    print(f"Error enriching {session.get('summary')}: {e}")
-                return session
-
-            with ThreadPoolExecutor(max_workers=30) as executor:
-                processed_relevant = list(executor.map(process_session, relevant_sessions))
-
-            final_list = processed_relevant + other_sessions
-            final_list.sort(key=lambda x: parser.parse(x["startTime"]).timestamp())
-
-            with lock:
-                enriched_sessions = final_list
-            
-        except Exception as e:
-            print(f"❌ [ATTENDANCE] Error: {e}")
-            
-        time.sleep(20)
-
 @app.route('/sessions')
 def get_sessions():
-    with lock:
-        return jsonify(enriched_sessions if enriched_sessions else calendar_skeleton)
+    with lock: return jsonify(enriched_sessions if enriched_sessions else calendar_skeleton)
 
 @app.route('/sync-config', methods=['POST'])
 def update_sync_config():
     global active_timeframes
     data = request.json
-    with lock:
-        active_timeframes = data.get('timeframes', [])
+    with lock: active_timeframes = data.get('timeframes', [])
     return jsonify({"success": True})
 
-@app.route('/sessions/<session_id>/record', methods=['POST'])
-def toggle_recording(session_id):
-    return jsonify({"success": True})
+def background_startup():
+    global creds
+    load_databases()
+    try:
+        creds = auth.authenticate()
+        print("✅ [STARTUP] Auth success.")
+    except Exception as e:
+        print(f"❌ [STARTUP] Auth failed: {e}")
+
+threading.Thread(target=background_startup, daemon=True).start()
+threading.Thread(target=skeleton_loader, daemon=True).start()
+threading.Thread(target=attendance_monitor, daemon=True).start()
 
 if __name__ == '__main__':
     app.run(port=3001, host='0.0.0.0')
