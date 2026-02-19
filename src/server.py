@@ -17,8 +17,16 @@ import csv
 import os
 import re
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='../dist', static_url_path='/')
 CORS(app)
+
+@app.route('/')
+def serve_index():
+    return app.send_static_file('index.html')
+
+@app.errorhandler(404)
+def not_found(e):
+    return app.send_static_file('index.html')
 
 # Global storage
 calendar_skeleton = []
