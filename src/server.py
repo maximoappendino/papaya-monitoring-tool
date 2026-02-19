@@ -1,8 +1,13 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import auth
-import calendar_client
-import meet_client
+try:
+    from . import auth
+    from . import calendar_client
+    from . import meet_client
+except ImportError:
+    import auth
+    import calendar_client
+    import meet_client
 import datetime
 from concurrent.futures import ThreadPoolExecutor
 from dateutil import parser
