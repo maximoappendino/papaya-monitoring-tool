@@ -10,8 +10,7 @@ def get_env_values():
     else:
         print("File 'credentials.json' not found.")
 
-    print("
---- GOOGLE_TOKEN_PICKLE ---")
+    print("\n--- GOOGLE_TOKEN_PICKLE ---")
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as f:
             print(base64.b64encode(f.read()).decode('utf-8'))

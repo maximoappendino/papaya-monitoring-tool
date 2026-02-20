@@ -38,3 +38,12 @@ This tool pulls upcoming meetings from your Google Calendar and attempts to veri
    ```bash
    python src/main.py
    ```
+
+
+
+3. Run the Application
+
+  3.1. python -c "from src.auth import authenticate; authenticate()"
+
+  3.2. python get_deploy_vars.py
+
